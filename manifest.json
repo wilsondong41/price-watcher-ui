@@ -1,0 +1,9 @@
+{
+  "name": "Price Watcher",
+  "short_name": "Price Watch",
+  "description": "Manage your 24/7 price, restock, and deal watchlist",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#2563eb"
+}
