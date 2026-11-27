@@ -369,6 +369,7 @@
 
     async function ghApi(path, opts = {}) {
       const res = await fetch(`https://api.github.com${path}`, {
+        cache: "no-store",
         ...opts,
         headers: {
           "Accept": "application/vnd.github+json",
@@ -391,7 +392,7 @@
     }
 
     async function getJsonFile(path) {
-      const res = await ghApi(`/repos/${AUTH.repo}/contents/${path}?ref=main&_=${Date.now()}`);
+      const res = await ghApi(`/repos/${AUTH.repo}/contents/${path}?ref=main`);
       return { sha: res.sha, data: JSON.parse(b64DecodeUtf8(res.content)) };
     }
 
@@ -913,7 +914,12 @@
     });
 
     $("connBtn").addEventListener("click", async () => {
-      const repo = $("connRepo").value.trim().replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$/, "");
+      const rawRepo = $("connRepo").value.trim()
+        .replace(/^https?:\/\/github\.com\//i, "")
+        .replace(/\.git$/i, "")
+        .replace(/^\/+|\/+$/g, "");
+      const parts = rawRepo.split("/").filter(Boolean);
+      const repo = parts.length >= 2 ? `${parts[0]}/${parts[1]}` : rawRepo;
       const token = $("connToken").value.trim();
       const errEl = $("connErr");
       errEl.classList.add("hidden");
@@ -922,6 +928,7 @@
         errEl.classList.remove("hidden");
         return;
       }
+      $("connRepo").value = repo;
       $("connBtn").disabled = true;
       $("connBtn").textContent = "Connecting…";
       AUTH = { repo, token };
@@ -932,8 +939,28 @@
         $("appView").classList.remove("hidden");
         await loadAll();
       } catch (err) {
+        let detail = `Could not access ${repo}: ${err.message}`;
+        if (err.status === 401) {
+          detail = "Token was rejected (401). Double-check you copied the entire GitHub token with no extra spaces.";
+        } else if (err.status === 404 || err.status === 403) {
+          try {
+            await ghApi("/user");
+            try {
+              await ghApi(`/repos/${repo}`);
+              detail = `Found repo "${repo}", but couldn't read config.json. Make sure your token has Repository permissions → Contents: Read and write.`;
+            } catch (repoErr) {
+              if (repoErr.status === 404 || repoErr.status === 403) {
+                detail = `GitHub returned Not Found for "${repo}". For a private repo, this means your token doesn't have access to it. Edit or recreate your Fine-Grained token on GitHub → Repository access: select "${parts[1] || repo}" (not a "-ui" repo) → Repository permissions: Contents = Read and write, Actions = Read and write.`;
+              }
+            }
+          } catch (userErr) {
+            if (userErr.status === 401) {
+              detail = "Token was rejected (401). Double-check you copied the entire GitHub token with no extra spaces.";
+            }
+          }
+        }
         AUTH = null;
-        errEl.textContent = `Could not access ${repo}: ${err.message}`;
+        errEl.textContent = detail;
         errEl.classList.remove("hidden");
       } finally {
         $("connBtn").disabled = false;
