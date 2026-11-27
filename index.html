@@ -150,10 +150,15 @@
     .price-big { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
     .store-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .inline-edit {
-      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
       background: var(--card-muted); padding: 8px 10px; border-radius: 10px; font-size: 12px;
     }
-    .inline-edit input[type="number"] { width: 92px; padding: 5px 8px; font-size: 13px; }
+    .inline-edit input[type="number"] { width: 88px; padding: 5px 8px; font-size: 13px; }
+    .inline-edit select { width: auto; padding: 5px 8px; font-size: 12px; }
+    .trigger-line {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      font-size: 12px; color: var(--text);
+    }
     .rule-row {
       display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
       padding: 10px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap;
@@ -481,6 +486,59 @@
       }
     }
 
+    function getItemMode(item) {
+      if (item.alert_below_price != null) return "below";
+      if (item.alert_on_sale || item.baseline_price != null) return "sale";
+      if (item.alert_on_in_stock) return "stock";
+      return "sale";
+    }
+
+    function describeTrigger(item, st) {
+      const mode = getItemMode(item);
+      const reqStock = Boolean(item.require_in_stock);
+      let ruleText = "";
+      if (mode === "below") {
+        const cap = fmtPrice(item.alert_below_price);
+        ruleText = reqStock ? `In Stock AND ≤ ${cap}` : `≤ ${cap} (any stock)`;
+      } else if (mode === "sale") {
+        if (item.baseline_price != null) {
+          ruleText = `On sale OR drops below ${fmtPrice(item.baseline_price)}`;
+        } else {
+          ruleText = "On sale";
+        }
+        if (reqStock) ruleText += " (must be in stock)";
+      } else {
+        ruleText = "Back in stock";
+      }
+
+      let statusText = "Ready to alert on next check";
+      let statusClass = "pill-in";
+      if (st.price == null && st.in_stock == null) {
+        statusText = "Waiting for first check";
+        statusClass = "pill-muted";
+      } else if (st.last_alerted_price != null) {
+        statusText = `Alerted at ${fmtPrice(st.last_alerted_price)} · re-alerts if lower`;
+        statusClass = "pill-in";
+      } else if (reqStock && st.in_stock === false) {
+        statusText = "Waiting — currently Out of Stock";
+        statusClass = "pill-warn";
+      } else if (mode === "below" && st.price != null && Number(st.price) > Number(item.alert_below_price)) {
+        statusText = `Waiting — ${fmtPrice(st.price)} is above ${fmtPrice(item.alert_below_price)}`;
+        statusClass = "pill-muted";
+      } else if (mode === "sale" && !st.on_sale && (item.baseline_price == null || (st.price != null && Number(st.price) >= Number(item.baseline_price)))) {
+        statusText = `Waiting — regular price (${fmtPrice(st.price)})`;
+        statusClass = "pill-muted";
+      } else if (mode === "stock" && st.in_stock === false) {
+        statusText = "Waiting — Out of Stock";
+        statusClass = "pill-warn";
+      } else if (mode === "stock" && st.in_stock === true) {
+        statusText = "Currently In Stock (alerts on next restock)";
+        statusClass = "pill-muted";
+      }
+
+      return { mode, ruleText, statusText, statusClass };
+    }
+
     function render() {
       const products = CONFIG?.products || [];
       const prodState = STATE?.products || {};
@@ -512,8 +570,12 @@
             const subLabel = (item.label && cleanName(item.label) !== gName)
               ? `<span style="font-size:12px;color:var(--muted);">${esc(cleanName(item.label))}</span>` : "";
             const lowTxt = st.lowest_seen != null ? `Low ${fmtPrice(st.lowest_seen)}` : "";
-            const curTarget = item.alert_below_price != null ? item.alert_below_price : (item.baseline_price ?? "");
+            const trig = describeTrigger(item, st);
+            const curPriceVal = trig.mode === "below" ? (item.alert_below_price ?? "") : trig.mode === "sale" ? (item.baseline_price ?? "") : "";
+            const priceLabel = trig.mode === "below" ? "Max $" : "Regular $";
+            const hidePrice = trig.mode === "stock" ? "hidden" : "";
             const reqStock = item.require_in_stock ? "checked" : "";
+            const hideReq = trig.mode === "stock" ? "hidden" : "";
 
             return `
               <div class="store-row" data-idx="${idx}">
@@ -536,10 +598,19 @@
                     <button class="btn btn-danger btn-sm js-del-item" data-idx="${idx}" type="button">Delete</button>
                   </div>
                 </div>
+                <div class="trigger-line">
+                  <strong>Alerts when:</strong> ${esc(trig.ruleText)}
+                  <span class="pill ${trig.statusClass}">${esc(trig.statusText)}</span>
+                </div>
                 <div class="inline-edit">
-                  <span>Target $</span>
-                  <input type="number" step="0.01" min="0" class="js-target-in" data-idx="${idx}" value="${esc(curTarget)}" placeholder="any">
-                  <label class="check-row" style="margin:0;font-size:12px;">
+                  <select class="js-mode-in" data-idx="${idx}" aria-label="Alert mode">
+                    <option value="below" ${trig.mode === "below" ? "selected" : ""}>≤ Max Price</option>
+                    <option value="sale" ${trig.mode === "sale" ? "selected" : ""}>On Sale / Below</option>
+                    <option value="stock" ${trig.mode === "stock" ? "selected" : ""}>Back in Stock</option>
+                  </select>
+                  <span class="js-price-lbl ${hidePrice}" data-idx="${idx}">${priceLabel}</span>
+                  <input type="number" step="0.01" min="0" class="js-target-in ${hidePrice}" data-idx="${idx}" value="${esc(curPriceVal)}" placeholder="any">
+                  <label class="check-row js-req-wrap ${hideReq}" data-idx="${idx}" style="margin:0;font-size:12px;">
                     <input type="checkbox" class="js-req-in" data-idx="${idx}" ${reqStock}> Require In Stock
                   </label>
                   <button class="btn btn-primary btn-sm js-save-item hidden" data-idx="${idx}" type="button">Save</button>
@@ -574,6 +645,7 @@
           return `
             <div class="rule-row">
               <div style="flex:1;min-width:200px;">
+                <div style="font-size:11px;color:var(--muted);margin-bottom:2px;">Triggers when Reddit / Slickdeals post matches:</div>
                 <div class="badge-row">
                   <strong style="font-size:14px;">${esc(terms)}</strong>
                   ${cap}
@@ -582,7 +654,11 @@
                 ${ex}
               </div>
               <div class="store-actions">
-                <input type="number" step="0.01" min="0" style="width:86px;padding:5px 8px;font-size:12px;" class="js-rule-max" data-ridx="${rIdx}" value="${r.max_price ?? ""}" placeholder="Max $">
+                <input type="number" step="0.01" min="0" style="width:82px;padding:5px 8px;font-size:12px;" class="js-rule-max" data-ridx="${rIdx}" value="${r.max_price ?? ""}" placeholder="Max $">
+                <select style="width:auto;padding:5px 8px;font-size:12px;" class="js-rule-prio" data-ridx="${rIdx}" aria-label="Rule priority">
+                  <option value="high" ${r.priority === "high" ? "selected" : ""}>High (DND)</option>
+                  <option value="default" ${r.priority !== "high" ? "selected" : ""}>Quiet</option>
+                </select>
                 <button class="btn btn-primary btn-sm js-save-rule hidden" data-ridx="${rIdx}" type="button">Save</button>
                 <button class="btn btn-danger btn-sm js-del-rule" data-ridx="${rIdx}" type="button">Delete</button>
               </div>
@@ -595,6 +671,29 @@
     }
 
     function bindDynamicEvents() {
+      document.querySelectorAll(".js-mode-in").forEach((sel) => {
+        sel.addEventListener("change", () => {
+          const idx = sel.dataset.idx;
+          const mode = sel.value;
+          const lbl = document.querySelector(`.js-price-lbl[data-idx="${idx}"]`);
+          const inp = document.querySelector(`.js-target-in[data-idx="${idx}"]`);
+          const reqWrap = document.querySelector(`.js-req-wrap[data-idx="${idx}"]`);
+          const reqInp = document.querySelector(`.js-req-in[data-idx="${idx}"]`);
+          if (mode === "stock") {
+            lbl?.classList.add("hidden");
+            inp?.classList.add("hidden");
+            reqWrap?.classList.add("hidden");
+            if (reqInp) reqInp.checked = true;
+          } else {
+            lbl?.classList.remove("hidden");
+            inp?.classList.remove("hidden");
+            reqWrap?.classList.remove("hidden");
+            if (lbl) lbl.textContent = mode === "below" ? "Max $" : "Regular $";
+          }
+          document.querySelector(`.js-save-item[data-idx="${idx}"]`)?.classList.remove("hidden");
+        });
+      });
+
       document.querySelectorAll(".js-target-in, .js-req-in").forEach((el) => {
         el.addEventListener("input", () => {
           const idx = el.dataset.idx;
@@ -609,23 +708,37 @@
       document.querySelectorAll(".js-save-item").forEach((btn) => {
         btn.addEventListener("click", async () => {
           const idx = Number(btn.dataset.idx);
+          const mode = document.querySelector(`.js-mode-in[data-idx="${idx}"]`).value;
           const valRaw = document.querySelector(`.js-target-in[data-idx="${idx}"]`).value.trim();
           const reqStock = document.querySelector(`.js-req-in[data-idx="${idx}"]`).checked;
+          if (mode === "below" && (valRaw === "" || Number.isNaN(Number(valRaw)))) {
+            showToast("Enter a Max Price ($)");
+            return;
+          }
           const targetId = CONFIG.products[idx]?.id;
           btn.disabled = true;
           try {
             await saveConfig((cfg) => {
               const item = cfg.products.find((p) => p.id === targetId) || cfg.products[idx];
               if (!item) return;
-              item.require_in_stock = reqStock;
-              if (valRaw !== "") {
+              delete item.alert_below_price;
+              delete item.baseline_price;
+              delete item.alert_on_sale;
+              delete item.alert_on_in_stock;
+              if (mode === "below") {
                 item.alert_below_price = Math.round(Number(valRaw) * 100) / 100;
-                delete item.baseline_price;
-                delete item.alert_on_in_stock;
+                item.require_in_stock = reqStock;
+              } else if (mode === "sale") {
+                item.alert_on_sale = true;
+                item.require_in_stock = reqStock;
+                if (valRaw !== "" && !Number.isNaN(Number(valRaw))) {
+                  item.baseline_price = Math.round(Number(valRaw) * 100) / 100;
+                }
               } else {
-                delete item.alert_below_price;
+                item.alert_on_in_stock = true;
+                item.require_in_stock = true;
               }
-            }, "chore: update item target from dashboard");
+            }, "chore: update item trigger rules from dashboard");
             showToast("Saved item settings");
             render();
           } catch (e) {
@@ -676,8 +789,12 @@
         });
       });
 
-      document.querySelectorAll(".js-rule-max").forEach((el) => {
+      document.querySelectorAll(".js-rule-max, .js-rule-prio").forEach((el) => {
         el.addEventListener("input", () => {
+          const ridx = el.dataset.ridx;
+          document.querySelector(`.js-save-rule[data-ridx="${ridx}"]`)?.classList.remove("hidden");
+        });
+        el.addEventListener("change", () => {
           const ridx = el.dataset.ridx;
           document.querySelector(`.js-save-rule[data-ridx="${ridx}"]`)?.classList.remove("hidden");
         });
@@ -688,12 +805,16 @@
           const ridx = Number(btn.dataset.ridx);
           const ruleId = CONFIG.deal_rules[ridx]?.id;
           const rawVal = document.querySelector(`.js-rule-max[data-ridx="${ridx}"]`).value.trim();
+          const prio = document.querySelector(`.js-rule-prio[data-ridx="${ridx}"]`).value;
           btn.disabled = true;
           try {
             await saveConfig((cfg) => {
               const r = (cfg.deal_rules || []).find((x) => x.id === ruleId) || cfg.deal_rules[ridx];
-              if (r) r.max_price = rawVal === "" ? null : Math.round(Number(rawVal) * 100) / 100;
-            }, "chore: update deal rule cap from dashboard");
+              if (r) {
+                r.max_price = rawVal === "" ? null : Math.round(Number(rawVal) * 100) / 100;
+                r.priority = prio;
+              }
+            }, "chore: update deal rule from dashboard");
             showToast("Deal rule updated");
             render();
           } catch (e) {
@@ -739,13 +860,13 @@
       }
     }
 
-    async function pollWorkflowUntilDone(workflowFile, timeoutMs = 45000) {
+    async function pollWorkflowUntilDone(workflowFile, timeoutMs = 45000, sinceMs = 0) {
       const start = Date.now();
       while (Date.now() - start < timeoutMs) {
         await new Promise((r) => setTimeout(r, 3500));
-        const runs = await ghApi(`/repos/${AUTH.repo}/actions/workflows/${workflowFile}/runs?per_page=1`).catch(() => null);
-        renderRunStatus(runs);
-        const run = runs?.workflow_runs?.[0];
+        const runs = await ghApi(`/repos/${AUTH.repo}/actions/workflows/${workflowFile}/runs?per_page=3`).catch(() => null);
+        if (workflowFile === "watch.yml") renderRunStatus(runs);
+        const run = (runs?.workflow_runs || []).find((r) => !sinceMs || new Date(r.created_at).getTime() >= sinceMs);
         if (run && run.status === "completed") {
           await loadAll();
           return run.conclusion === "success";
@@ -787,6 +908,7 @@
       btn.disabled = true;
       btn.textContent = "Adding & Checking…";
       try {
+        const sinceMs = Date.now() - 5000;
         const inputs = { url, watch_for: mode, require_in_stock: reqStock };
         if (mode === "below" && price !== "") inputs.target_price = price;
         await ghApi(`/repos/${AUTH.repo}/actions/workflows/add-item.yml/dispatches`, {
@@ -797,7 +919,7 @@
         $("linkUrl").value = "";
         $("linkTarget").value = "";
         showToast("Triggered check — updating in ~15s…", 4500);
-        const ok = await pollWorkflowUntilDone("add-item.yml", 45000);
+        const ok = await pollWorkflowUntilDone("add-item.yml", 45000, sinceMs);
         showToast(ok ? "Added & synced!" : "Queued on GitHub — refresh in a few seconds");
       } catch (err) {
         showToast(`Error: ${err.message}`, 4500);
@@ -853,13 +975,14 @@
       const btn = $("runNowBtn");
       btn.disabled = true;
       try {
+        const sinceMs = Date.now() - 5000;
         await ghApi(`/repos/${AUTH.repo}/actions/workflows/watch.yml/dispatches`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ref: "main" }),
         });
         showToast("Live check started…", 4000);
-        await pollWorkflowUntilDone("watch.yml", 55000);
+        await pollWorkflowUntilDone("watch.yml", 55000, sinceMs);
         showToast("Check finished!");
       } catch (err) {
         showToast(`Error: ${err.message}`);
