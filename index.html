@@ -1001,7 +1001,7 @@
         await ghApi(`/repos/${AUTH.repo}/actions/workflows/watch.yml/dispatches`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ref: "main" }),
+          body: JSON.stringify({ ref: "main", inputs: { re_alert: true } }),
         });
         showToast("Live check started…", 4000);
         await pollWorkflowUntilDone("watch.yml", 55000, sinceMs);
