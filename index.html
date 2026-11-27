@@ -95,6 +95,7 @@
     .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
     .btn-danger { color: var(--red); border-color: transparent; background: var(--red-bg); }
     .btn-danger:hover { opacity: 0.88; }
+    .btn-flash-on { background: var(--amber-bg); color: var(--amber); border-color: var(--amber); }
     .btn-sm { padding: 6px 10px; font-size: 12px; min-height: 32px; border-radius: 8px; }
     .tabs { display: flex; gap: 6px; margin-bottom: 12px; background: var(--card-muted); padding: 4px; border-radius: 10px; }
     .tab {
@@ -226,6 +227,7 @@
         </div>
         <div class="toolbar">
           <button id="runNowBtn" class="btn btn-primary btn-sm">Run Check Now</button>
+          <button id="flashBtn" class="btn btn-sm" type="button" title="Check every 2 minutes for 30 minutes">⚡ Flash Mode (30m)</button>
           <button id="refreshBtn" class="btn btn-sm">Refresh</button>
           <button id="settingsBtn" class="btn btn-sm">Settings</button>
         </div>
@@ -342,6 +344,7 @@
     let AUTH = null;
     let CONFIG = null;
     let STATE = null;
+    let ACTIVE_FLASH_RUN_ID = null;
 
     const $ = (id) => document.getElementById(id);
 
@@ -844,16 +847,35 @@
       });
     }
 
+    function renderFlashState(flashRunsData) {
+      const btn = $("flashBtn");
+      const dot = $("runDot"), txt = $("runStatus");
+      const run = flashRunsData?.workflow_runs?.[0];
+      if (run && run.status !== "completed") {
+        ACTIVE_FLASH_RUN_ID = run.id;
+        btn.textContent = "⚡ Flash ON · Stop";
+        btn.classList.add("btn-flash-on");
+        dot.className = "dot run";
+        txt.textContent = "⚡ Flash Mode active (checks every 2m)";
+      } else {
+        ACTIVE_FLASH_RUN_ID = null;
+        btn.textContent = "⚡ Flash Mode (30m)";
+        btn.classList.remove("btn-flash-on");
+      }
+    }
+
     async function loadAll() {
       try {
-        const [cfgRes, stRes, runsRes] = await Promise.all([
+        const [cfgRes, stRes, runsRes, flashRes] = await Promise.all([
           getJsonFile("config.json"),
           getJsonFile("state.json").catch(() => ({ data: { products: {} } })),
           ghApi(`/repos/${AUTH.repo}/actions/workflows/watch.yml/runs?per_page=1`).catch(() => null),
+          ghApi(`/repos/${AUTH.repo}/actions/workflows/flash-sale.yml/runs?per_page=1`).catch(() => null),
         ]);
         CONFIG = cfgRes.data;
         STATE = stRes.data;
         renderRunStatus(runsRes);
+        renderFlashState(flashRes);
         render();
       } catch (err) {
         showToast(`Load failed: ${err.message}`, 4500);
@@ -986,6 +1008,35 @@
         showToast("Check finished!");
       } catch (err) {
         showToast(`Error: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    $("flashBtn").addEventListener("click", async () => {
+      const btn = $("flashBtn");
+      btn.disabled = true;
+      try {
+        if (ACTIVE_FLASH_RUN_ID) {
+          await ghApi(`/repos/${AUTH.repo}/actions/runs/${ACTIVE_FLASH_RUN_ID}/cancel`, {
+            method: "POST",
+          });
+          ACTIVE_FLASH_RUN_ID = null;
+          btn.textContent = "⚡ Flash Mode (30m)";
+          btn.classList.remove("btn-flash-on");
+          showToast("Stopping Flash Mode…");
+          setTimeout(() => loadAll(), 2500);
+        } else {
+          await ghApi(`/repos/${AUTH.repo}/actions/workflows/flash-sale.yml/dispatches`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ref: "main", inputs: { duration_minutes: "30" } }),
+          });
+          showToast("⚡ Flash Mode started — checking every 2 min for 30 min!", 4500);
+          setTimeout(() => loadAll(), 3500);
+        }
+      } catch (err) {
+        showToast(`Error: ${err.message}`, 4500);
       } finally {
         btn.disabled = false;
       }
