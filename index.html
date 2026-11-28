@@ -570,6 +570,20 @@
                 : `<span class="pill pill-muted">Pending Check</span>`;
             const zipTag = (item.type === "samsung" || item.type === "target") && (item.zip_code || CONFIG.zip_code)
               ? `<span class="pill pill-muted">ZIP ${esc(item.zip_code || CONFIG.zip_code)}</span>` : "";
+            const browserTag = item.use_browser
+              ? `<span class="pill pill-muted" title="Uses Playwright browser rendering">Browser</span>` : "";
+            const errLabels = {
+              cloudflare_challenge: "Cloudflare challenge",
+              http_403: "Blocked (403)",
+              http_429: "Rate limited (429)",
+              auth_failure: "Login required",
+              playwright_not_installed: "Browser not installed",
+              parse_error: "Price not found",
+              site_maintenance: "Site maintenance",
+              timeout: "Timed out",
+            };
+            const errPill = (st.last_status && st.last_status !== "ok")
+              ? `<span class="pill pill-out" title="${esc(st.last_error || st.last_status)}">⚠ ${esc(errLabels[st.last_status] || "Check failed")}</span>` : "";
             const subLabel = (item.label && cleanName(item.label) !== gName)
               ? `<span style="font-size:12px;color:var(--muted);">${esc(cleanName(item.label))}</span>` : "";
             const lowTxt = st.lowest_seen != null ? `Low ${fmtPrice(st.lowest_seen)}` : "";
@@ -588,6 +602,8 @@
                       <span class="pill pill-store">${esc(store)}</span>
                       ${stockPill}
                       ${zipTag}
+                      ${browserTag}
+                      ${errPill}
                     </div>
                     ${subLabel}
                     <div style="display:flex;align-items:center;gap:10px;margin-top:2px;flex-wrap:wrap;">
@@ -940,8 +956,8 @@
         });
         $("linkUrl").value = "";
         $("linkTarget").value = "";
-        showToast("Triggered check — updating in ~15s…", 4500);
-        const ok = await pollWorkflowUntilDone("add-item.yml", 45000, sinceMs);
+        showToast("Triggered check — updating in ~20s…", 4500);
+        const ok = await pollWorkflowUntilDone("add-item.yml", 90000, sinceMs);
         showToast(ok ? "Added & synced!" : "Queued on GitHub — refresh in a few seconds");
       } catch (err) {
         showToast(`Error: ${err.message}`, 4500);
